@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小组积分管理系统</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box;font-family:"微软雅黑",Arial,sans-serif}
+        body{background:#f5f7fa;padding:20px;max-width:1000px;margin:0 auto}
+        .card{background:white;padding:20px;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,0.08);margin-bottom:16px}
+        h1{text-align:center;color:#2d3748;margin:10px 0 20px}
+        .btn{padding:8px 16px;border:none;border-radius:6px;background:#4299e1;color:white;cursor:pointer;margin:4px}
+        .btn-red{background:#f56565}
+        .btn-green{background:#48bb78}
+        .btn-orange{background:#ed8936}
+        input,select{padding:8px 10px;border:1px solid #ddd;border-radius:6px;margin:4px;width:160px}
+        .flex{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+        table{width:100%;border-collapse:collapse;margin:16px 0}
+        th,td{padding:12px;text-align:left;border-bottom:1px solid #eee}
+        th{background:#f7fafc}
+        .total{font-size:18px;font-weight:bold;color:#2b6cb0;margin:10px 0}
+        .empty{text-align:center;padding:20px;color:#718096}
+        .hidden{display:none !important}
+        .user-table{font-size:14px}
+        .user-info-bar{text-align:right;padding:10px;color:#2d3748;font-weight:bold}
+
+        /* 登录遮罩 */
+        #loginMask{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:999;display:flex;align-items:center;justify-content:center}
+        .loginBox{background:white;padding:30px;border-radius:12px;width:320px}
+        .loginBox h3{margin-bottom:16px;text-align:center}
+    </style>
+</head>
+
+<body>
+<!-- 登录弹窗 -->
+<div id="loginMask">
+    <div class="loginBox">
+        <h3>请输入账号密码</h3>
+        <input type="text" id="accountInput" placeholder="账号" style="width:100%;margin-bottom:8px">
+        <input type="password" id="pwdInput" placeholder="密码" style="width:100%">
+        <button class="btn" style="width:100%;margin-top:12px" onclick="checkLogin()">登录</button>
+    </div>
+</div>
+
+<!-- 用户信息栏 + 退出登录 -->
+<div class="user-info-bar hidden" id="userBar">
+    当前身份：<span id="userRole"></span> | <span id="userName"></span>
+    <button class="btn btn-red" onclick="logout()">退出登录</button>
+</div>
+
+<h1>🏅 小组学习积分系统</h1>
+
+<!-- 🔴 管理员专属：用户管理面板（创建账号） -->
+<div class="card hidden" id="adminPanel">
+    <h3>👑 管理员 - 用户账号管理</h3>
+    <div class="flex">
+        <input id="newAccount" placeholder="新账号">
+        <input id="newPwd" placeholder="密码">
+        <select id="newRole">
+            <option value="user">普通用户</option>
+            <option value="admin">管理员</option>
+        </select>
+        <button class="btn btn-green" onclick="createAccount()">创建账号</button>
+    </div>
+    <table class="user-table">
+        <thead>
+            <tr><th>账号</th><th>角色</th></tr>
+        </thead>
+        <tbody id="accountList"></tbody>
+    </table>
+</div>
+
+<!-- 小组管理 -->
+<div class="card">
+    <div class="flex">
+        <input id="newGroup" placeholder="小组名称">
+        <button class="btn" onclick="createGroup()">创建小组</button>
+        <select id="groupSel" onchange="switchGroup()"></select>
+        <button class="btn btn-red" onclick="delGroup()">删除当前小组</button>
+        <button class="btn btn-orange" onclick="clearGroupScore()">清空本组积分</button>
+        <button class="btn btn-red" onclick="clearAllData()" style="background:#e53e3e">清空所有数据</button>
+    </div>
+</div>
+
+<!-- 添加成员 -->
+<div class="card">
+    <input id="name" placeholder="成员姓名">
+    <button class="btn" onclick="addMember()">添加成员</button>
+    <button class="btn btn-green" onclick="exportExcel()">导出本组Excel</button>
+</div>
+
+<!-- 录入分数 -->
+<div class="card">
+    <input id="userName" placeholder="成员姓名">
+    <input id="score" type="number" placeholder="增加分数">
+    <button class="btn" onclick="addScore()">确认加分</button>
+</div>
+
+<!-- 总分 -->
+<div class="total">
+    当前小组：<span id="gName">-</span> &nbsp;&nbsp;
+    原始总分：<span id="t1">0</span> &nbsp;&nbsp;
+    倍数结算总分：<span id="t2">0</span>
+</div>
+
+<!-- 成员列表 -->
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>姓名</th><th>积分</th><th>类型</th><th>操作</th>
+            </tr>
+        </thead>
+        <tbody id="memberList"></tbody>
+    </table>
+    <div id="emptyTip" class="empty" style="display:none">暂无成员</div>
+</div>
+
+<script>
+// ==================== 核心配置 ====================
+// 【超级管理员】初始账号密码（仅这一个默认账号）
+const SUPER_ADMIN = { account: "admin", pwd: "88888888" };
+// 当前登录用户
+let currentUser = null;
+// ===================================================
+
+// 1. 账号数据存储
+function getAccounts(){
+    return JSON.parse(localStorage.getItem("scoreAccounts")) || [];
+}
+function saveAccounts(accounts){
+    localStorage.setItem("scoreAccounts", JSON.stringify(accounts));
+}
+
+// 2. 积分系统原有数据
+let data = JSON.parse(localStorage.getItem("scoreSysV2")) || { groups: [], currentIndex: -1 };
+data.groups.forEach(group => {
+    group.members.forEach(mem => {
+        if (mem.double !== undefined && mem.type === undefined) {
+            mem.type = mem.double ? "double" : "normal";
+            delete mem.double;
+        }
+    });
+});
+function save(){
+    localStorage.setItem("scoreSysV2", JSON.stringify(data));
+}
+
+// 3. 登录验证（支持超级管理员+子账号）
+function checkLogin(){
+    let account = document.getElementById("accountInput").value.trim();
+    let pwd = document.getElementById("pwdInput").value.trim();
+    let accounts = getAccounts();
+
+    // 验证超级管理员
+    if(account === SUPER_ADMIN.account && pwd === SUPER_ADMIN.pwd){
+        currentUser = { account: "超级管理员", role: "admin" };
+        loginSuccess();
+        return;
+    }
+
+    // 验证子账号
+    let target = accounts.find(item => item.account === account && item.pwd === pwd);
+    if(target){
+        currentUser = target;
+        loginSuccess();
+        return;
+    }
+
+    alert("账号或密码错误！");
+}
+
+// 登录成功
+function loginSuccess(){
+    document.getElementById("loginMask").style.display = "none";
+    document.getElementById("userBar").classList.remove("hidden");
+    document.getElementById("userName").textContent = currentUser.account;
+    document.getElementById("userRole").textContent = currentUser.role === "admin" ? "管理员" : "普通用户";
+
+    // 仅管理员显示账号管理面板
+    if(currentUser.role === "admin"){
+        document.getElementById("adminPanel").classList.remove("hidden");
+        renderAccountList();
+    }
+
+    init();
+}
+
+// 退出登录
+function logout(){
+    currentUser = null;
+    document.getElementById("loginMask").style.display = "flex";
+    document.getElementById("userBar").classList.add("hidden");
+    document.getElementById("adminPanel").classList.add("hidden");
+    document.getElementById("accountInput").value = "";
+    document.getElementById("pwdInput").value = "";
+}
+
+// 4. 🔴 仅管理员可创建账号
+function createAccount(){
+    if(!currentUser || currentUser.role !== "admin"){
+        alert("无权限！仅管理员可创建账号");
+        return;
+    }
+    let account = document.getElementById("newAccount").value.trim();
+    let pwd = document.getElementById("newPwd").value.trim();
+    let role = document.getElementById("newRole").value;
+
+    if(!account || !pwd){
+        alert("请输入账号和密码！");
+        return;
+    }
+
+    let accounts = getAccounts();
+    if(accounts.some(item => item.account === account) || account === SUPER_ADMIN.account){
+        alert("账号已存在！");
+        return;
+    }
+
+    accounts.push({ account, pwd, role });
+    saveAccounts(accounts);
+    alert("创建成功！");
+    document.getElementById("newAccount").value = "";
+    document.getElementById("newPwd").value = "";
+    renderAccountList();
+}
+
+// 渲染账号列表
+function renderAccountList(){
+    let list = document.getElementById("accountList");
+    list.innerHTML = "";
+    let accounts = getAccounts();
+    accounts.forEach(item => {
+        list.innerHTML += `
+        <tr>
+            <td>${item.account}</td>
+            <td>${item.role==="admin"?"管理员":"普通用户"}</td>
+        </tr>`;
+    });
+}
+
+// ==================== 原有积分系统功能（无修改） ====================
+function init(){ refreshGroupList(); renderMember(); }
+function refreshGroupList(){
+    let sel = document.getElementById("groupSel"); sel.innerHTML = "";
+    data.groups.forEach((g,i)=>{ let opt=document.createElement("option"); opt.value=i; opt.textContent=g.name; sel.appendChild(opt); });
+    sel.value = data.currentIndex;
+    document.getElementById("gName").textContent = data.currentIndex>=0 ? data.groups[data.currentIndex].name : "未选择";
+}
+function createGroup(){
+    let name = document.getElementById("newGroup").value.trim(); if(!name)return alert("输入小组名");
+    data.groups.push({name, members:[]}); data.currentIndex = data.groups.length-1;
+    document.getElementById("newGroup").value=""; save(); refreshGroupList(); renderMember();
+}
+function switchGroup(){ data.currentIndex = +document.getElementById("groupSel").value; save(); renderMember(); }
+function delGroup(){
+    if(data.currentIndex<0)return; if(!confirm("确定删除该小组？"))return;
+    data.groups.splice(data.currentIndex,1); data.currentIndex = data.groups.length?0:-1;
+    save(); refreshGroupList(); renderMember();
+}
+function renderMember(){
+    let list = document.getElementById("memberList"); let tip = document.getElementById("emptyTip");
+    list.innerHTML = ""; let t1=0,t2=0;
+    if(data.currentIndex<0 || data.groups[data.currentIndex].members.length===0){
+        tip.style.display="block"; document.getElementById("t1").textContent=0; document.getElementById("t2").textContent=0; return;
+    }
+    tip.style.display="none";
+    let g = data.groups[data.currentIndex];
+    g.members.forEach((m,i)=>{
+        t1+=m.score;
+        let realScore = m.score, typeText = "普通分";
+        if(m.type==="double"){realScore=m.score*2; typeText="✅双倍分";}
+        if(m.type==="triple"){realScore=m.score*3; typeText="✅三倍分";}
+        t2+=realScore;
+        list.innerHTML+=`
+        <tr>
+            <td>${m.name}</td><td>${m.score}</td><td>${typeText}</td>
+            <td>
+                <button class="btn" onclick="toggleScoreType(${i})">切换积分类型</button>
+                <button class="btn btn-orange" onclick="clearOneScore(${i})">清零</button>
+                <button class="btn btn-red" onclick="delMember(${i})">删除</button>
+            </td>
+        </tr>`;
+    });
+    document.getElementById("t1").textContent=t1; document.getElementById("t2").textContent=t2;
+}
+function addMember(){
+    if(data.currentIndex<0)return alert("先选小组");
+    let name = document.getElementById("name").value.trim(); if(!name)return;
+    let g = data.groups[data.currentIndex]; if(g.members.some(x=>x.name===name))return alert("已存在");
+    g.members.push({name,score:0,type:"normal"}); document.getElementById("name").value=""; save(); renderMember();
+}
+function addScore(){
+    if(data.currentIndex<0)return;
+    let name = document.getElementById("userName").value.trim(); let score = +document.getElementById("score").value||0;
+    let g = data.groups[data.currentIndex]; let m = g.members.find(x=>x.name===name);
+    if(!m)return alert("成员不存在"); m.score += score;
+    document.getElementById("userName").value=""; document.getElementById("score").value=""; save(); renderMember();
+}
+function toggleScoreType(i){
+    let g = data.groups[data.currentIndex]; let mem = g.members[i];
+    if(mem.type==="normal") mem.type="double";
+    else if(mem.type==="double") mem.type="triple";
+    else mem.type="normal";
+    save(); renderMember();
+}
+function delMember(i){ if(!confirm("确定删除？"))return; let g=data.groups[data.currentIndex]; g.members.splice(i,1); save(); renderMember(); }
+function clearOneScore(i){ let g=data.groups[data.currentIndex]; g.members[i].score=0; save(); renderMember(); }
+function clearGroupScore(){ if(data.currentIndex<0)return; if(!confirm("确定清空本小组所有积分？"))return; let g=data.groups[data.currentIndex]; g.members.forEach(m=>m.score=0); save(); renderMember(); }
+function clearAllData(){ if(!confirm("危险操作！确定清空所有小组、成员、积分？"))return; data={groups:[],currentIndex:-1}; save(); refreshGroupList(); renderMember(); }
+function exportExcel(){
+    if(data.currentIndex<0)return; let g=data.groups[data.currentIndex];
+    let csv = `小组：${g.name}\n姓名,积分,类型,实际得分\n`;
+    g.members.forEach(m=>{
+        let type="普通分",real=m.score;
+        if(m.type==="double"){type="双倍分";real=m.score*2;}
+        if(m.type==="triple"){type="三倍分";real=m.score*3;}
+        csv+=`${m.name},${m.score},${type},${real}\n`;
+    });
+    let t1 = g.members.reduce((s,m)=>s+m.score,0);
+    let t2 = g.members.reduce((s,m)=>{
+        if(m.type==="double")return s+m.score*2;
+        if(m.type==="triple")return s+m.score*3;
+        return s+m.score;
+    },0);
+    csv+=`\n原始总分,${t1}\n倍数结算总分,${t2}`;
+    let blob = new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"});
+    let a = document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=`${g.name}_积分表.csv`; a.click();
+}
+</script>
+</body>
+</html>
